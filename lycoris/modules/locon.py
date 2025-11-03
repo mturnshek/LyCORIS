@@ -253,6 +253,8 @@ class LoConModule(LycorisBaseModule):
                 .transpose(0, 1)
             ) + torch.finfo(weight.dtype).eps
 
+        weight_norm = weight_norm.detach()
+
         scale = self.dora_scale.to(weight.device) / weight_norm
         if multiplier != 1:
             scale = multiplier * (scale - 1) + 1
