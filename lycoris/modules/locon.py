@@ -315,18 +315,28 @@ class LoConModule(LycorisBaseModule):
             return self.bypass_forward(x, scale=self.multiplier)
 
         base = self.org_forward(x, *args, **kwargs)
-        scale = self.scale
         device = x.device
 
         base_weight = self._current_weight().to(device)
-        diff_weight = self.make_weight(device).to(base_weight.dtype) * scale
+
+        # FP8-safe compute dtype
+        if base_weight.dtype in (getattr(torch, "float8_e4m3fn", None),
+                                 getattr(torch, "float8_e5m2", None)):
+            compute_dtype = torch.bfloat16 if x.dtype == torch.float32 else x.dtype
+        else:
+            compute_dtype = base_weight.dtype
+
+        bw = base_weight.to(compute_dtype)
+        scale = torch.as_tensor(self.scale, device=device, dtype=compute_dtype)
+        diff_weight = self.make_weight(device).to(compute_dtype) * scale
+
         if self.wd:
             new_weight = self.apply_weight_decompose(
-                base_weight + diff_weight, self.multiplier
+                bw + diff_weight, self.multiplier
             )
         else:
-            new_weight = base_weight + diff_weight * self.multiplier
+            new_weight = bw + diff_weight * self.multiplier
 
-        delta_weight = new_weight - base_weight
+        delta_weight = new_weight - bw
         delta = self.op(x, delta_weight, None, **self.kw_dict)
         return base + delta

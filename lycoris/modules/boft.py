@@ -253,7 +253,16 @@ class ButterflyOFTModule(LycorisBaseModule):
             base = self.org_forward(x, *args, **kwargs)
             new_weight = self.make_weight(scale, x.device)
             base_weight = self._current_weight().to(new_weight.device)
-            new_weight = new_weight.to(base_weight.dtype)
-            delta_weight = new_weight - base_weight
+
+            # FP8-safe compute dtype
+            if base_weight.dtype in (getattr(torch, "float8_e4m3fn", None),
+                                     getattr(torch, "float8_e5m2", None)):
+                compute_dtype = torch.bfloat16 if x.dtype == torch.float32 else x.dtype
+            else:
+                compute_dtype = base_weight.dtype
+
+            bw = base_weight.to(compute_dtype)
+            new_weight = new_weight.to(compute_dtype)
+            delta_weight = new_weight - bw
             delta = self.op(x, weight=delta_weight, bias=None, **self.kw_dict)
             return base + delta

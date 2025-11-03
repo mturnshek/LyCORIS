@@ -308,15 +308,25 @@ class LohaModule(LycorisBaseModule):
 
         base = self.org_forward(x, *args, **kwargs)
         base_weight = self._current_weight().to(x.device)
-        diff_weight = self.get_weight(self.shape).to(base_weight.dtype) * self.scalar
+
+        # FP8-safe compute dtype
+        if base_weight.dtype in (getattr(torch, "float8_e4m3fn", None),
+                                 getattr(torch, "float8_e5m2", None)):
+            compute_dtype = torch.bfloat16 if x.dtype == torch.float32 else x.dtype
+        else:
+            compute_dtype = base_weight.dtype
+
+        bw = base_weight.to(compute_dtype)
+        scalar = torch.as_tensor(self.scalar, device=x.device, dtype=compute_dtype)
+        diff_weight = self.get_weight(self.shape).to(compute_dtype) * scalar
 
         if self.wd:
             new_weight = self.apply_weight_decompose(
-                base_weight + diff_weight, self.multiplier
+                bw + diff_weight, self.multiplier
             )
         else:
-            new_weight = base_weight + diff_weight * self.multiplier
+            new_weight = bw + diff_weight * self.multiplier
 
-        delta_weight = new_weight - base_weight
+        delta_weight = new_weight - bw
         delta = self.op(x, delta_weight, None, **self.kw_dict)
         return base + delta

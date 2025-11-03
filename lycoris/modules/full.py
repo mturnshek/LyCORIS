@@ -209,7 +209,17 @@ class FullModule(LycorisBaseModule):
         weight, bias = self.make_weight(self.multiplier, x.device)
 
         base_weight = self._current_weight().to(weight.device)
-        delta_weight = weight - base_weight
+
+        # FP8-safe compute dtype
+        if base_weight.dtype in (getattr(torch, "float8_e4m3fn", None),
+                                 getattr(torch, "float8_e5m2", None)):
+            compute_dtype = torch.bfloat16 if x.dtype == torch.float32 else x.dtype
+        else:
+            compute_dtype = base_weight.dtype
+
+        bw = base_weight.to(compute_dtype)
+        weight = weight.to(compute_dtype)
+        delta_weight = weight - bw
 
         org_bias = self._current_bias()
         if bias is not None:

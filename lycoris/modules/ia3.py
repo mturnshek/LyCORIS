@@ -134,11 +134,20 @@ class IA3Module(LycorisBaseModule):
             return self.bypass_forward(x, self.multiplier)
         else:
             base = self.org_forward(x, *args, **kwargs)
-            merged_weight = self.get_merged_weight(multiplier=self.multiplier)[0]
             base_weight = self._current_weight().to(x.device)
+
+            # FP8-safe compute dtype
+            if base_weight.dtype in (getattr(torch, "float8_e4m3fn", None),
+                                     getattr(torch, "float8_e5m2", None)):
+                compute_dtype = torch.bfloat16 if x.dtype == torch.float32 else x.dtype
+            else:
+                compute_dtype = base_weight.dtype
+
+            bw = base_weight.to(compute_dtype)
+            merged_weight = self.get_merged_weight(multiplier=self.multiplier)[0]
             merged_weight = merged_weight.to(
-                base_weight.device, dtype=base_weight.dtype
+                base_weight.device, dtype=compute_dtype
             )
-            delta_weight = merged_weight - base_weight
+            delta_weight = merged_weight - bw
             delta = self.op(x, delta_weight, None, **self.kw_dict)
             return base + delta
