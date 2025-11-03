@@ -236,13 +236,15 @@ class LohaModule(LycorisBaseModule):
         diff = self.get_diff_weight(multiplier=1, shape=shape, device=device)[0]
         weight = self.org_weight
         if self.wd:
-            merged = self.apply_weight_decompose(weight + diff, multiplier)
+            merged = self.apply_weight_decompose(weight, diff, multiplier)
         else:
             merged = weight + diff * multiplier
         return merged, None
 
-    def apply_weight_decompose(self, weight, multiplier=1):
-        weight = weight.to(self.dora_scale.dtype)
+    def apply_weight_decompose(self, base_weight, diff_weight, multiplier=1):
+        base_weight = base_weight.to(self.dora_scale.dtype)
+        diff_weight = diff_weight.to(self.dora_scale.dtype)
+        weight = base_weight + diff_weight
         if self.wd_on_out:
             weight_norm = (
                 weight.reshape(weight.shape[0], -1)
@@ -259,10 +261,12 @@ class LohaModule(LycorisBaseModule):
             ) + torch.finfo(weight.dtype).eps
 
         scale = self.dora_scale.to(weight.device) / weight_norm
-        if multiplier != 1:
-            scale = multiplier * (scale - 1) + 1
+        scaled_weight = weight * scale
 
-        return weight * scale
+        if multiplier == 1:
+            return scaled_weight
+
+        return base_weight + multiplier * (scaled_weight - base_weight)
 
     def custom_state_dict(self):
         destination = {}
@@ -322,7 +326,7 @@ class LohaModule(LycorisBaseModule):
 
         if self.wd:
             new_weight = self.apply_weight_decompose(
-                bw + diff_weight, self.multiplier
+                bw, diff_weight, self.multiplier
             )
         else:
             new_weight = bw + diff_weight * self.multiplier
